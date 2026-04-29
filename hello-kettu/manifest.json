@@ -1,14 +1,1 @@
-{
-  "name": "Hello Kettu",
-  "description": "A minimal Kettu plugin example.",
-  "authors": [
-    {
-      "name": "0xAndrei",
-      "id": "0"
-    }
-  ],
-  "main": "src/index.ts",
-  "vendetta": {
-    "icon": "ic_badge_staff"
-  }
-}
+{"name":"Hello Kettu","description":"A minimal Kettu plugin example.","authors":[{"name":"0xAndrei","id":"0"}],"main":"index.js","vendetta":{"icon":"ic_badge_staff"},"hash":"9a59cc7fd519ce4ad8c2b441fd0b11a72cf042de4a29cb895f1e2ceea1605be7"}

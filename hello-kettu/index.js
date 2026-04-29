@@ -1,0 +1,1 @@
+(function(e,t,n){"use strict";const{FormText:o}=n.Forms;function l(){return React.createElement(o,null,"Hello from your first Kettu plugin.")}var u={onLoad:function(){t.logger.log("Hello Kettu loaded")},onUnload:function(){t.logger.log("Hello Kettu unloaded")},settings:l};return e.default=u,Object.defineProperty(e,"__esModule",{value:!0}),e})({},vendetta,vendetta.ui.components);
