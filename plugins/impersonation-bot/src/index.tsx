@@ -1,12 +1,15 @@
 import { logger } from "@vendetta";
 import { plugin } from "@vendetta";
+import { registerCommand } from "@vendetta/commands";
 import { findByStoreName } from "@vendetta/metro";
 import { after, instead } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
-import Settings from "./Settings";
 
 const LOG_PREFIX = "[impersonation-bot]";
 const PATCH_RETRY_INTERVAL_MS = 3000;
+const COMMAND_INPUT_BUILT_IN_TEXT = 1;
+const COMMAND_TYPE_CHAT = 1;
+const COMMAND_OPTION_TYPE_STRING = 3;
 
 type MessageLike = {
     id?: string;
@@ -37,6 +40,7 @@ const changes = {
 };
 
 let patchRetryTimer: ReturnType<typeof setInterval> | null = null;
+let unregisterCommands: Array<() => void> = [];
 let unpatches: Array<() => void> = [];
 let hasPatchedMessageStore = false;
 let hasPatchedUserStore = false;
@@ -76,6 +80,216 @@ function loadStoredChanges() {
             }
         }
     }
+}
+
+function ensureStorageMap(key: "messageEdits" | "nameChanges") {
+    const current = plugin.storage[key];
+    if (!current || typeof current !== "object") {
+        plugin.storage[key] = {};
+    }
+
+    return plugin.storage[key] as Record<string, string>;
+}
+
+function setMessageOverride(messageId: string, content: string) {
+    ensureStorageMap("messageEdits")[messageId] = content;
+    changes.edits.set(messageId, content);
+}
+
+function removeMessageOverride(messageId: string) {
+    delete ensureStorageMap("messageEdits")[messageId];
+    changes.edits.delete(messageId);
+}
+
+function setNameOverride(userId: string, name: string) {
+    ensureStorageMap("nameChanges")[userId] = name;
+    changes.names.set(userId, name);
+}
+
+function removeNameOverride(userId: string) {
+    delete ensureStorageMap("nameChanges")[userId];
+    changes.names.delete(userId);
+}
+
+function clearOverrides() {
+    plugin.storage.messageEdits = {};
+    plugin.storage.nameChanges = {};
+    changes.edits.clear();
+    changes.names.clear();
+}
+
+function normalizeCommandArgs(args: any[]) {
+    const normalized: Record<string, any> = {};
+
+    if (!Array.isArray(args)) return normalized;
+
+    for (const arg of args) {
+        if (arg && typeof arg === "object" && "name" in arg) {
+            normalized[arg.name] = arg.value;
+        }
+    }
+
+    return normalized;
+}
+
+function registerSlashCommands() {
+    const baseCommand = {
+        applicationId: "-1",
+        inputType: COMMAND_INPUT_BUILT_IN_TEXT,
+        type: COMMAND_TYPE_CHAT
+    };
+
+    unregisterCommands.push(registerCommand({
+        ...baseCommand,
+        name: "msgedit",
+        displayName: "msgedit",
+        description: "Override a message locally by ID.",
+        displayDescription: "Override a message locally by ID.",
+        options: [
+            {
+                name: "message_id",
+                displayName: "message_id",
+                description: "Target message ID",
+                displayDescription: "Target message ID",
+                required: true,
+                type: COMMAND_OPTION_TYPE_STRING
+            },
+            {
+                name: "text",
+                displayName: "text",
+                description: "Replacement message text",
+                displayDescription: "Replacement message text",
+                required: true,
+                type: COMMAND_OPTION_TYPE_STRING
+            }
+        ],
+        execute(args) {
+            const options = normalizeCommandArgs(args);
+            const messageId = String(options.message_id ?? "").trim();
+            const text = String(options.text ?? "").trim();
+
+            if (!messageId || !text) {
+                return { content: "Usage: /msgedit message_id:<id> text:<new text>" };
+            }
+
+            setMessageOverride(messageId, text);
+            showToast("Message override saved");
+            return { content: `Saved local override for message \`${messageId}\`.` };
+        }
+    }));
+
+    unregisterCommands.push(registerCommand({
+        ...baseCommand,
+        name: "msgclear",
+        displayName: "msgclear",
+        description: "Remove a local message override by ID.",
+        displayDescription: "Remove a local message override by ID.",
+        options: [
+            {
+                name: "message_id",
+                displayName: "message_id",
+                description: "Target message ID",
+                displayDescription: "Target message ID",
+                required: true,
+                type: COMMAND_OPTION_TYPE_STRING
+            }
+        ],
+        execute(args) {
+            const options = normalizeCommandArgs(args);
+            const messageId = String(options.message_id ?? "").trim();
+
+            if (!messageId) {
+                return { content: "Usage: /msgclear message_id:<id>" };
+            }
+
+            removeMessageOverride(messageId);
+            showToast("Message override removed");
+            return { content: `Removed local override for message \`${messageId}\`.` };
+        }
+    }));
+
+    unregisterCommands.push(registerCommand({
+        ...baseCommand,
+        name: "nameedit",
+        displayName: "nameedit",
+        description: "Override a displayed username locally by user ID.",
+        displayDescription: "Override a displayed username locally by user ID.",
+        options: [
+            {
+                name: "user_id",
+                displayName: "user_id",
+                description: "Target user ID",
+                displayDescription: "Target user ID",
+                required: true,
+                type: COMMAND_OPTION_TYPE_STRING
+            },
+            {
+                name: "name",
+                displayName: "name",
+                description: "Replacement display name",
+                displayDescription: "Replacement display name",
+                required: true,
+                type: COMMAND_OPTION_TYPE_STRING
+            }
+        ],
+        execute(args) {
+            const options = normalizeCommandArgs(args);
+            const userId = String(options.user_id ?? "").trim();
+            const name = String(options.name ?? "").trim();
+
+            if (!userId || !name) {
+                return { content: "Usage: /nameedit user_id:<id> name:<new name>" };
+            }
+
+            setNameOverride(userId, name);
+            showToast("Name override saved");
+            return { content: `Saved local name override for user \`${userId}\`.` };
+        }
+    }));
+
+    unregisterCommands.push(registerCommand({
+        ...baseCommand,
+        name: "nameclear",
+        displayName: "nameclear",
+        description: "Remove a local name override by user ID.",
+        displayDescription: "Remove a local name override by user ID.",
+        options: [
+            {
+                name: "user_id",
+                displayName: "user_id",
+                description: "Target user ID",
+                displayDescription: "Target user ID",
+                required: true,
+                type: COMMAND_OPTION_TYPE_STRING
+            }
+        ],
+        execute(args) {
+            const options = normalizeCommandArgs(args);
+            const userId = String(options.user_id ?? "").trim();
+
+            if (!userId) {
+                return { content: "Usage: /nameclear user_id:<id>" };
+            }
+
+            removeNameOverride(userId);
+            showToast("Name override removed");
+            return { content: `Removed local name override for user \`${userId}\`.` };
+        }
+    }));
+
+    unregisterCommands.push(registerCommand({
+        ...baseCommand,
+        name: "impclear",
+        displayName: "impclear",
+        description: "Clear all local message and name overrides.",
+        displayDescription: "Clear all local message and name overrides.",
+        options: [],
+        execute() {
+            clearOverrides();
+            showToast("All overrides cleared");
+            return { content: "Cleared all local impersonation overrides." };
+        }
+    }));
 }
 
 function applyMessageEdit(message: MessageLike | null | undefined) {
@@ -196,10 +410,10 @@ export default {
     onLoad() {
         loadStoredChanges();
         ensurePatches();
+        registerSlashCommands();
 
         patchRetryTimer = setInterval(() => {
             ensurePatches();
-            loadStoredChanges();
         }, PATCH_RETRY_INTERVAL_MS);
 
         showToast("Impersonation Bot active");
@@ -220,10 +434,17 @@ export default {
             }
         }
 
+        for (const unregister of unregisterCommands) {
+            try {
+                unregister();
+            } catch {
+                // Ignore command cleanup failures.
+            }
+        }
+
+        unregisterCommands = [];
         unpatches = [];
         resetState();
         log("Unloaded");
-    },
-
-    settings: Settings
+    }
 };
