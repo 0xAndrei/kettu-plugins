@@ -6,7 +6,9 @@ import { after, instead } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
 
 const LOG_PREFIX = "[impersonation-bot]";
+const DEFAULT_API_URL = "http://192.168.0.52:8080/api";
 const PATCH_RETRY_INTERVAL_MS = 3000;
+const SYNC_INTERVAL_MS = 4000;
 const COMMAND_INPUT_BUILT_IN_TEXT = 1;
 const COMMAND_TYPE_CHAT = 1;
 const COMMAND_OPTION_TYPE_STRING = 3;
@@ -16,7 +18,7 @@ type MessageLike = {
     content?: string;
     contentParsed?: any;
     editedTimestamp?: any;
-    isEdited?: boolean;
+    isEdited?: boolean | (() => boolean);
     [key: string]: any;
 };
 
@@ -40,7 +42,9 @@ const changes = {
     names: new Map<string, string>()
 };
 
+let currentUserId: string | null = null;
 let patchRetryTimer: ReturnType<typeof setInterval> | null = null;
+let syncTimer: ReturnType<typeof setInterval> | null = null;
 let unregisterCommands: Array<() => void> = [];
 let unpatches: Array<() => void> = [];
 let hasPatchedMessageStore = false;
@@ -59,64 +63,17 @@ function cloneWithOverrides<T extends Record<string, any>>(value: T, overrides: 
     }
 }
 
-function loadStoredChanges() {
-    const messageEdits = plugin.storage.messageEdits;
-    const nameChanges = plugin.storage.nameChanges;
-
-    changes.edits.clear();
-    changes.names.clear();
-
-    if (messageEdits && typeof messageEdits === "object") {
-        for (const [messageId, newContent] of Object.entries(messageEdits)) {
-            if (typeof newContent === "string" && newContent.length) {
-                changes.edits.set(messageId, newContent);
-            }
-        }
+function getApiUrl() {
+    const raw = plugin.storage.apiUrl;
+    if (typeof raw === "string" && raw.trim().length) {
+        return raw.trim().replace(/\/+$/, "");
     }
 
-    if (nameChanges && typeof nameChanges === "object") {
-        for (const [userId, newName] of Object.entries(nameChanges)) {
-            if (typeof newName === "string" && newName.length) {
-                changes.names.set(userId, newName);
-            }
-        }
-    }
+    return DEFAULT_API_URL;
 }
 
-function ensureStorageMap(key: "messageEdits" | "nameChanges") {
-    const current = plugin.storage[key];
-    if (!current || typeof current !== "object") {
-        plugin.storage[key] = {};
-    }
-
-    return plugin.storage[key] as Record<string, string>;
-}
-
-function setMessageOverride(messageId: string, content: string) {
-    ensureStorageMap("messageEdits")[messageId] = content;
-    changes.edits.set(messageId, content);
-}
-
-function removeMessageOverride(messageId: string) {
-    delete ensureStorageMap("messageEdits")[messageId];
-    changes.edits.delete(messageId);
-}
-
-function setNameOverride(userId: string, name: string) {
-    ensureStorageMap("nameChanges")[userId] = name;
-    changes.names.set(userId, name);
-}
-
-function removeNameOverride(userId: string) {
-    delete ensureStorageMap("nameChanges")[userId];
-    changes.names.delete(userId);
-}
-
-function clearOverrides() {
-    plugin.storage.messageEdits = {};
-    plugin.storage.nameChanges = {};
-    changes.edits.clear();
-    changes.names.clear();
+function setApiUrl(url: string) {
+    plugin.storage.apiUrl = url.trim().replace(/\/+$/, "");
 }
 
 function normalizeCommandArgs(args: any[]) {
@@ -133,6 +90,64 @@ function normalizeCommandArgs(args: any[]) {
     return normalized;
 }
 
+function resolveCurrentUserId() {
+    if (currentUserId) return currentUserId;
+
+    try {
+        const UserStore = findByStoreName("UserStore");
+        const user = UserStore?.getCurrentUser?.();
+        if (user?.id) {
+            currentUserId = user.id;
+            return currentUserId;
+        }
+    } catch {
+        // Ignore store resolution failures until the next sync pass.
+    }
+
+    return null;
+}
+
+async function syncChanges() {
+    const userId = resolveCurrentUserId();
+    if (!userId) return;
+
+    try {
+        const response = await fetch(`${getApiUrl()}/changes/${userId}`, {
+            method: "GET",
+            headers: {
+                Accept: "application/json"
+            }
+        });
+
+        if (!response.ok) return;
+
+        const payload = await response.json();
+
+        changes.edits.clear();
+        changes.names.clear();
+
+        if (Array.isArray(payload?.message_edits)) {
+            for (const edit of payload.message_edits) {
+                if (edit?.message_id && typeof edit?.new_content === "string") {
+                    changes.edits.set(edit.message_id, edit.new_content);
+                }
+            }
+        }
+
+        if (Array.isArray(payload?.name_changes)) {
+            for (const change of payload.name_changes) {
+                if (change?.target_user_id && typeof change?.new_name === "string") {
+                    changes.names.set(change.target_user_id, change.new_name);
+                }
+            }
+        }
+
+        log("Synced", `${changes.edits.size} edits`, `${changes.names.size} names`);
+    } catch {
+        // Keep quiet when the bot API is unreachable.
+    }
+}
+
 function registerSlashCommands() {
     const baseCommand = {
         applicationId: "-1",
@@ -142,152 +157,44 @@ function registerSlashCommands() {
 
     unregisterCommands.push(registerCommand({
         ...baseCommand,
-        name: "msgedit",
-        displayName: "msgedit",
-        description: "Override a message locally by ID.",
-        displayDescription: "Override a message locally by ID.",
+        name: "impapi",
+        displayName: "impapi",
+        description: "Set the API URL for the impersonation bot.",
+        displayDescription: "Set the API URL for the impersonation bot.",
         options: [
             {
-                name: "message_id",
-                displayName: "message_id",
-                description: "Target message ID",
-                displayDescription: "Target message ID",
-                required: true,
-                type: COMMAND_OPTION_TYPE_STRING
-            },
-            {
-                name: "text",
-                displayName: "text",
-                description: "Replacement message text",
-                displayDescription: "Replacement message text",
+                name: "url",
+                displayName: "url",
+                description: "Example: http://192.168.0.52:8080/api",
+                displayDescription: "Example: http://192.168.0.52:8080/api",
                 required: true,
                 type: COMMAND_OPTION_TYPE_STRING
             }
         ],
         execute(args) {
             const options = normalizeCommandArgs(args);
-            const messageId = String(options.message_id ?? "").trim();
-            const text = String(options.text ?? "").trim();
+            const url = String(options.url ?? "").trim();
 
-            if (!messageId || !text) {
-                showToast("Usage: /msgedit message_id:<id> text:<new text>");
+            if (!url) {
+                showToast("Usage: /impapi url:<http://ip:port/api>");
                 return;
             }
 
-            setMessageOverride(messageId, text);
-            showToast("Message override saved");
+            setApiUrl(url);
+            showToast("Impersonation API URL saved");
         }
     }));
 
     unregisterCommands.push(registerCommand({
         ...baseCommand,
-        name: "msgclear",
-        displayName: "msgclear",
-        description: "Remove a local message override by ID.",
-        displayDescription: "Remove a local message override by ID.",
-        options: [
-            {
-                name: "message_id",
-                displayName: "message_id",
-                description: "Target message ID",
-                displayDescription: "Target message ID",
-                required: true,
-                type: COMMAND_OPTION_TYPE_STRING
-            }
-        ],
-        execute(args) {
-            const options = normalizeCommandArgs(args);
-            const messageId = String(options.message_id ?? "").trim();
-
-            if (!messageId) {
-                showToast("Usage: /msgclear message_id:<id>");
-                return;
-            }
-
-            removeMessageOverride(messageId);
-            showToast("Message override removed");
-        }
-    }));
-
-    unregisterCommands.push(registerCommand({
-        ...baseCommand,
-        name: "nameedit",
-        displayName: "nameedit",
-        description: "Override a displayed username locally by user ID.",
-        displayDescription: "Override a displayed username locally by user ID.",
-        options: [
-            {
-                name: "user_id",
-                displayName: "user_id",
-                description: "Target user ID",
-                displayDescription: "Target user ID",
-                required: true,
-                type: COMMAND_OPTION_TYPE_STRING
-            },
-            {
-                name: "name",
-                displayName: "name",
-                description: "Replacement display name",
-                displayDescription: "Replacement display name",
-                required: true,
-                type: COMMAND_OPTION_TYPE_STRING
-            }
-        ],
-        execute(args) {
-            const options = normalizeCommandArgs(args);
-            const userId = String(options.user_id ?? "").trim();
-            const name = String(options.name ?? "").trim();
-
-            if (!userId || !name) {
-                showToast("Usage: /nameedit user_id:<id> name:<new name>");
-                return;
-            }
-
-            setNameOverride(userId, name);
-            showToast("Name override saved");
-        }
-    }));
-
-    unregisterCommands.push(registerCommand({
-        ...baseCommand,
-        name: "nameclear",
-        displayName: "nameclear",
-        description: "Remove a local name override by user ID.",
-        displayDescription: "Remove a local name override by user ID.",
-        options: [
-            {
-                name: "user_id",
-                displayName: "user_id",
-                description: "Target user ID",
-                displayDescription: "Target user ID",
-                required: true,
-                type: COMMAND_OPTION_TYPE_STRING
-            }
-        ],
-        execute(args) {
-            const options = normalizeCommandArgs(args);
-            const userId = String(options.user_id ?? "").trim();
-
-            if (!userId) {
-                showToast("Usage: /nameclear user_id:<id>");
-                return;
-            }
-
-            removeNameOverride(userId);
-            showToast("Name override removed");
-        }
-    }));
-
-    unregisterCommands.push(registerCommand({
-        ...baseCommand,
-        name: "impclear",
-        displayName: "impclear",
-        description: "Clear all local message and name overrides.",
-        displayDescription: "Clear all local message and name overrides.",
+        name: "impsync",
+        displayName: "impsync",
+        description: "Force a sync from the impersonation bot API.",
+        displayDescription: "Force a sync from the impersonation bot API.",
         options: [],
         execute() {
-            clearOverrides();
-            showToast("All overrides cleared");
+            void syncChanges();
+            showToast("Impersonation sync requested");
         }
     }));
 }
@@ -420,6 +327,7 @@ function ensurePatches() {
 }
 
 function resetState() {
+    currentUserId = null;
     changes.edits.clear();
     changes.names.clear();
     hasPatchedMessageStore = false;
@@ -429,22 +337,31 @@ function resetState() {
 
 export default {
     onLoad() {
-        loadStoredChanges();
         ensurePatches();
         registerSlashCommands();
+        void syncChanges();
 
         patchRetryTimer = setInterval(() => {
             ensurePatches();
         }, PATCH_RETRY_INTERVAL_MS);
 
+        syncTimer = setInterval(() => {
+            void syncChanges();
+        }, SYNC_INTERVAL_MS);
+
         showToast("Impersonation Bot active");
-        log("Loaded", `${changes.edits.size} message overrides`, `${changes.names.size} name overrides`);
+        log("Loaded with API", getApiUrl());
     },
 
     onUnload() {
         if (patchRetryTimer) {
             clearInterval(patchRetryTimer);
             patchRetryTimer = null;
+        }
+
+        if (syncTimer) {
+            clearInterval(syncTimer);
+            syncTimer = null;
         }
 
         for (const unpatch of unpatches) {
