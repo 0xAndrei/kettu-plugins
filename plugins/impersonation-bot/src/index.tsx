@@ -206,33 +206,25 @@ function applyMessageEdit(message: MessageLike | null | undefined) {
     if (!editedContent) return message;
     if (message.__impersonationEdited && message.content === editedContent) return message;
 
-    try {
-        message.content = editedContent;
-        message.contentParsed = editedContent;
-        message.__impersonationEdited = true;
+    const originalEditedTimestamp = message.editedTimestamp;
+    const originalIsEdited = message.isEdited;
 
-        try {
-            delete message.editedTimestamp;
-        } catch {
-            message.editedTimestamp = undefined;
-        }
+    const patched = cloneWithOverrides(message, {
+        content: editedContent,
+        contentParsed: editedContent,
+        editedTimestamp: originalEditedTimestamp,
+        __impersonationEdited: true
+    });
 
-        if (typeof message.isEdited === "function") {
-            message.isEdited = () => false;
+    if (!originalEditedTimestamp) {
+        if (typeof originalIsEdited === "function") {
+            patched.isEdited = () => false;
         } else {
-            message.isEdited = false;
+            patched.isEdited = false;
         }
-
-        return message;
-    } catch {
-        return cloneWithOverrides(message, {
-            content: editedContent,
-            contentParsed: editedContent,
-            editedTimestamp: undefined,
-            isEdited: false,
-            __impersonationEdited: true
-        });
     }
+
+    return patched;
 }
 
 function applyNameOverride(user: UserLike | null | undefined) {
@@ -278,11 +270,15 @@ function patchMessageStore() {
             const entries = result?._array;
             if (!Array.isArray(entries) || !entries.length) return result;
 
-            for (let index = 0; index < entries.length; index++) {
-                const patched = applyMessageEdit(entries[index]);
-                if (patched !== entries[index]) {
-                    entries[index] = patched;
-                }
+            let changed = false;
+            const nextEntries = entries.map((entry) => {
+                const patched = applyMessageEdit(entry);
+                if (patched !== entry) changed = true;
+                return patched;
+            });
+
+            if (changed) {
+                result._array = nextEntries;
             }
 
             return result;
