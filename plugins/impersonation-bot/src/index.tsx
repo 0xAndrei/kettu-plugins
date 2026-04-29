@@ -90,6 +90,16 @@ function cloneWithEdit(message: MessageLike, editedContent: string) {
     }
 }
 
+function cloneWithOverrides<T extends Record<string, any>>(value: T, overrides: Partial<T>) {
+    try {
+        const cloned = Object.create(Object.getPrototypeOf(value) ?? Object.prototype);
+        Object.assign(cloned, value, overrides);
+        return cloned;
+    } catch {
+        return Object.assign({}, value, overrides);
+    }
+}
+
 function applyMessageEdit(message: MessageLike | null | undefined) {
     if (!message?.id) return message;
 
@@ -106,12 +116,11 @@ function applyNameOverride(user: UserLike | null | undefined) {
     const nextName = changes.names.get(user.id);
     if (!nextName) return user;
 
-    return {
-        ...user,
+    return cloneWithOverrides(user, {
         username: nextName,
         globalName: nextName,
         displayName: nextName
-    };
+    });
 }
 
 function applyMemberOverride(member: MemberLike | null | undefined) {
@@ -120,11 +129,10 @@ function applyMemberOverride(member: MemberLike | null | undefined) {
     const nextName = changes.names.get(member.userId);
     if (!nextName) return member;
 
-    return {
-        ...member,
+    return cloneWithOverrides(member, {
         nick: nextName,
         displayName: nextName
-    };
+    });
 }
 
 async function syncChanges() {
@@ -186,15 +194,17 @@ function patchMessageStore() {
             const entries = result?._array;
             if (!Array.isArray(entries) || !entries.length) return result;
 
-            const nextEntries = entries.map((message: MessageLike) => applyMessageEdit(message));
-            if (nextEntries.every((message: MessageLike, index: number) => message === entries[index])) {
-                return result;
+            let changed = false;
+
+            for (let index = 0; index < entries.length; index++) {
+                const patched = applyMessageEdit(entries[index]);
+                if (patched !== entries[index]) {
+                    entries[index] = patched;
+                    changed = true;
+                }
             }
 
-            return {
-                ...result,
-                _array: nextEntries
-            };
+            return changed ? result : result;
         }));
     }
 
