@@ -134,15 +134,7 @@ async function syncChanges() {
             }
         }
 
-        if (Array.isArray(payload?.name_changes)) {
-            for (const change of payload.name_changes) {
-                if (change?.target_user_id && typeof change?.new_name === "string") {
-                    changes.names.set(change.target_user_id, change.new_name);
-                }
-            }
-        }
-
-        log("Synced", `${changes.edits.size} edits`, `${changes.names.size} names`);
+        log("Synced", `${changes.edits.size} edits`);
     } catch {
         // Keep quiet when the bot API is unreachable.
     }
@@ -227,31 +219,6 @@ function applyMessageEdit(message: MessageLike | null | undefined) {
     return patched;
 }
 
-function applyNameOverride(user: UserLike | null | undefined) {
-    if (!user?.id) return user;
-
-    const nextName = changes.names.get(user.id);
-    if (!nextName) return user;
-
-    return cloneWithOverrides(user, {
-        username: nextName,
-        globalName: nextName,
-        displayName: nextName
-    });
-}
-
-function applyMemberOverride(member: MemberLike | null | undefined) {
-    if (!member?.userId) return member;
-
-    const nextName = changes.names.get(member.userId);
-    if (!nextName) return member;
-
-    return cloneWithOverrides(member, {
-        nick: nextName,
-        displayName: nextName
-    });
-}
-
 function patchMessageStore() {
     if (hasPatchedMessageStore) return;
 
@@ -289,34 +256,10 @@ function patchMessageStore() {
     log("Patched MessageStore");
 }
 
-function patchUserStore() {
-    if (hasPatchedUserStore) return;
-
-    const UserStore = findByStoreName("UserStore");
-    if (!UserStore || typeof UserStore.getUser !== "function") return;
-
-    unpatches.push(after("getUser", UserStore, (_args, result) => applyNameOverride(result)));
-    hasPatchedUserStore = true;
-    log("Patched UserStore");
-}
-
-function patchGuildMemberStore() {
-    if (hasPatchedGuildMemberStore) return;
-
-    const GuildMemberStore = findByStoreName("GuildMemberStore");
-    if (!GuildMemberStore || typeof GuildMemberStore.getMember !== "function") return;
-
-    unpatches.push(after("getMember", GuildMemberStore, (_args, result) => applyMemberOverride(result)));
-    hasPatchedGuildMemberStore = true;
-    log("Patched GuildMemberStore");
-}
-
 function ensurePatches() {
     patchMessageStore();
-    patchUserStore();
-    patchGuildMemberStore();
 
-    if (hasPatchedMessageStore && hasPatchedUserStore && hasPatchedGuildMemberStore && patchRetryTimer) {
+    if (hasPatchedMessageStore && patchRetryTimer) {
         clearInterval(patchRetryTimer);
         patchRetryTimer = null;
     }
@@ -327,8 +270,6 @@ function resetState() {
     changes.edits.clear();
     changes.names.clear();
     hasPatchedMessageStore = false;
-    hasPatchedUserStore = false;
-    hasPatchedGuildMemberStore = false;
 }
 
 export default {
