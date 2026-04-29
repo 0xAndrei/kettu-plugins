@@ -14,6 +14,7 @@ const COMMAND_OPTION_TYPE_STRING = 3;
 type MessageLike = {
     id?: string;
     content?: string;
+    contentParsed?: any;
     editedTimestamp?: any;
     isEdited?: boolean;
     [key: string]: any;
@@ -300,6 +301,7 @@ function applyMessageEdit(message: MessageLike | null | undefined) {
 
     try {
         message.content = editedContent;
+        message.contentParsed = editedContent;
         message.__impersonationEdited = true;
 
         try {
@@ -318,6 +320,7 @@ function applyMessageEdit(message: MessageLike | null | undefined) {
     } catch {
         return cloneWithOverrides(message, {
             content: editedContent,
+            contentParsed: editedContent,
             editedTimestamp: undefined,
             isEdited: false,
             __impersonationEdited: true
