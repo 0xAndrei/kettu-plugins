@@ -169,12 +169,12 @@ function registerSlashCommands() {
             const text = String(options.text ?? "").trim();
 
             if (!messageId || !text) {
-                return { content: "Usage: /msgedit message_id:<id> text:<new text>" };
+                showToast("Usage: /msgedit message_id:<id> text:<new text>");
+                return;
             }
 
             setMessageOverride(messageId, text);
             showToast("Message override saved");
-            return { content: `Saved local override for message \`${messageId}\`.` };
         }
     }));
 
@@ -199,12 +199,12 @@ function registerSlashCommands() {
             const messageId = String(options.message_id ?? "").trim();
 
             if (!messageId) {
-                return { content: "Usage: /msgclear message_id:<id>" };
+                showToast("Usage: /msgclear message_id:<id>");
+                return;
             }
 
             removeMessageOverride(messageId);
             showToast("Message override removed");
-            return { content: `Removed local override for message \`${messageId}\`.` };
         }
     }));
 
@@ -238,12 +238,12 @@ function registerSlashCommands() {
             const name = String(options.name ?? "").trim();
 
             if (!userId || !name) {
-                return { content: "Usage: /nameedit user_id:<id> name:<new name>" };
+                showToast("Usage: /nameedit user_id:<id> name:<new name>");
+                return;
             }
 
             setNameOverride(userId, name);
             showToast("Name override saved");
-            return { content: `Saved local name override for user \`${userId}\`.` };
         }
     }));
 
@@ -268,12 +268,12 @@ function registerSlashCommands() {
             const userId = String(options.user_id ?? "").trim();
 
             if (!userId) {
-                return { content: "Usage: /nameclear user_id:<id>" };
+                showToast("Usage: /nameclear user_id:<id>");
+                return;
             }
 
             removeNameOverride(userId);
             showToast("Name override removed");
-            return { content: `Removed local name override for user \`${userId}\`.` };
         }
     }));
 
@@ -287,7 +287,6 @@ function registerSlashCommands() {
         execute() {
             clearOverrides();
             showToast("All overrides cleared");
-            return { content: "Cleared all local impersonation overrides." };
         }
     }));
 }
