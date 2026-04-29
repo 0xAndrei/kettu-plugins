@@ -1,19 +1,18 @@
-import { plugin } from "@vendetta";
 import { logger } from "@vendetta";
+import { plugin } from "@vendetta";
 import { findByStoreName } from "@vendetta/metro";
 import { after, instead } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
 import Settings from "./Settings";
 
 const LOG_PREFIX = "[impersonation-bot]";
-const DEFAULT_API_URL = "http://192.168.0.52:8080/api";
-const SYNC_INTERVAL_MS = 4000;
 const PATCH_RETRY_INTERVAL_MS = 3000;
 
 type MessageLike = {
     id?: string;
     content?: string;
-    editedTimestamp?: number;
+    editedTimestamp?: any;
+    isEdited?: boolean;
     [key: string]: any;
 };
 
@@ -37,8 +36,6 @@ const changes = {
     names: new Map<string, string>()
 };
 
-let currentUserId: string | null = null;
-let syncTimer: ReturnType<typeof setInterval> | null = null;
 let patchRetryTimer: ReturnType<typeof setInterval> | null = null;
 let unpatches: Array<() => void> = [];
 let hasPatchedMessageStore = false;
@@ -46,49 +43,6 @@ let hasPatchedUserStore = false;
 let hasPatchedGuildMemberStore = false;
 
 const log = (...args: any[]) => logger.log(LOG_PREFIX, ...args);
-
-function getApiBase() {
-    const raw = plugin.storage.apiUrl;
-    if (typeof raw === "string" && raw.trim().length) return raw.trim().replace(/\/+$/, "");
-    return DEFAULT_API_URL;
-}
-
-function getCurrentUserId() {
-    if (currentUserId) return currentUserId;
-
-    try {
-        const UserStore = findByStoreName("UserStore");
-        const user = UserStore?.getCurrentUser?.();
-        if (user?.id) {
-            currentUserId = user.id;
-            log("Resolved current user", currentUserId);
-            return currentUserId;
-        }
-    } catch (error) {
-        log("Failed to resolve current user", String(error));
-    }
-
-    return null;
-}
-
-function cloneWithEdit(message: MessageLike, editedContent: string) {
-    try {
-        const cloned = Object.create(Object.getPrototypeOf(message) ?? Object.prototype);
-        Object.assign(cloned, message, {
-            content: editedContent,
-            editedTimestamp: Date.now(),
-            __impersonationEdited: true
-        });
-        return cloned;
-    } catch {
-        return {
-            ...message,
-            content: editedContent,
-            editedTimestamp: Date.now(),
-            __impersonationEdited: true
-        };
-    }
-}
 
 function cloneWithOverrides<T extends Record<string, any>>(value: T, overrides: Partial<T>) {
     try {
@@ -100,6 +54,30 @@ function cloneWithOverrides<T extends Record<string, any>>(value: T, overrides: 
     }
 }
 
+function loadStoredChanges() {
+    const messageEdits = plugin.storage.messageEdits;
+    const nameChanges = plugin.storage.nameChanges;
+
+    changes.edits.clear();
+    changes.names.clear();
+
+    if (messageEdits && typeof messageEdits === "object") {
+        for (const [messageId, newContent] of Object.entries(messageEdits)) {
+            if (typeof newContent === "string" && newContent.length) {
+                changes.edits.set(messageId, newContent);
+            }
+        }
+    }
+
+    if (nameChanges && typeof nameChanges === "object") {
+        for (const [userId, newName] of Object.entries(nameChanges)) {
+            if (typeof newName === "string" && newName.length) {
+                changes.names.set(userId, newName);
+            }
+        }
+    }
+}
+
 function applyMessageEdit(message: MessageLike | null | undefined) {
     if (!message?.id) return message;
 
@@ -107,7 +85,12 @@ function applyMessageEdit(message: MessageLike | null | undefined) {
     if (!editedContent) return message;
     if (message.__impersonationEdited && message.content === editedContent) return message;
 
-    return cloneWithEdit(message, editedContent);
+    return cloneWithOverrides(message, {
+        content: editedContent,
+        editedTimestamp: null,
+        isEdited: false,
+        __impersonationEdited: true
+    });
 }
 
 function applyNameOverride(user: UserLike | null | undefined) {
@@ -135,47 +118,6 @@ function applyMemberOverride(member: MemberLike | null | undefined) {
     });
 }
 
-async function syncChanges() {
-    const userId = getCurrentUserId();
-    if (!userId) return;
-
-    try {
-        const response = await fetch(`${getApiBase()}/changes/${userId}`, {
-            method: "GET",
-            headers: {
-                Accept: "application/json"
-            }
-        });
-
-        if (!response.ok) return;
-
-        const payload = await response.json();
-
-        changes.edits.clear();
-        changes.names.clear();
-
-        if (Array.isArray(payload?.message_edits)) {
-            for (const edit of payload.message_edits) {
-                if (edit?.message_id && typeof edit?.new_content === "string") {
-                    changes.edits.set(edit.message_id, edit.new_content);
-                }
-            }
-        }
-
-        if (Array.isArray(payload?.name_changes)) {
-            for (const nameChange of payload.name_changes) {
-                if (nameChange?.target_user_id && typeof nameChange?.new_name === "string") {
-                    changes.names.set(nameChange.target_user_id, nameChange.new_name);
-                }
-            }
-        }
-
-        log("Synced", `${changes.edits.size} edits`, `${changes.names.size} names`);
-    } catch {
-        // API downtime is expected on mobile networks; keep this silent.
-    }
-}
-
 function patchMessageStore() {
     if (hasPatchedMessageStore) return;
 
@@ -194,17 +136,14 @@ function patchMessageStore() {
             const entries = result?._array;
             if (!Array.isArray(entries) || !entries.length) return result;
 
-            let changed = false;
-
             for (let index = 0; index < entries.length; index++) {
                 const patched = applyMessageEdit(entries[index]);
                 if (patched !== entries[index]) {
                     entries[index] = patched;
-                    changed = true;
                 }
             }
 
-            return changed ? result : result;
+            return result;
         }));
     }
 
@@ -246,7 +185,6 @@ function ensurePatches() {
 }
 
 function resetState() {
-    currentUserId = null;
     changes.edits.clear();
     changes.names.clear();
     hasPatchedMessageStore = false;
@@ -256,28 +194,19 @@ function resetState() {
 
 export default {
     onLoad() {
-        log("Loading with API", getApiBase());
-
+        loadStoredChanges();
         ensurePatches();
-        void syncChanges();
-
-        syncTimer = setInterval(() => {
-            void syncChanges();
-        }, SYNC_INTERVAL_MS);
 
         patchRetryTimer = setInterval(() => {
             ensurePatches();
+            loadStoredChanges();
         }, PATCH_RETRY_INTERVAL_MS);
 
         showToast("Impersonation Bot active");
+        log("Loaded", `${changes.edits.size} message overrides`, `${changes.names.size} name overrides`);
     },
 
     onUnload() {
-        if (syncTimer) {
-            clearInterval(syncTimer);
-            syncTimer = null;
-        }
-
         if (patchRetryTimer) {
             clearInterval(patchRetryTimer);
             patchRetryTimer = null;
