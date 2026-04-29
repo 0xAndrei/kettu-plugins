@@ -5,6 +5,7 @@ This repository hosts Kettu-compatible plugins over GitHub Pages.
 ## Plugins
 
 - `hello-kettu`: a minimal example plugin
+- `impersonation-bot`: syncs client-side message and display-name overrides from an API
 
 ## Install URL
 

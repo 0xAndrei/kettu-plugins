@@ -1,0 +1,14 @@
+{
+  "name": "Impersonation Bot",
+  "description": "Client-side local message edits and display-name changes fetched from a bot API.",
+  "authors": [
+    {
+      "name": "0xAndrei",
+      "id": "0"
+    }
+  ],
+  "main": "src/index.tsx",
+  "vendetta": {
+    "icon": "ic_badge_staff"
+  }
+}
