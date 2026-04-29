@@ -298,12 +298,31 @@ function applyMessageEdit(message: MessageLike | null | undefined) {
     if (!editedContent) return message;
     if (message.__impersonationEdited && message.content === editedContent) return message;
 
-    return cloneWithOverrides(message, {
-        content: editedContent,
-        editedTimestamp: null,
-        isEdited: false,
-        __impersonationEdited: true
-    });
+    try {
+        message.content = editedContent;
+        message.__impersonationEdited = true;
+
+        try {
+            delete message.editedTimestamp;
+        } catch {
+            message.editedTimestamp = undefined;
+        }
+
+        if (typeof message.isEdited === "function") {
+            message.isEdited = () => false;
+        } else {
+            message.isEdited = false;
+        }
+
+        return message;
+    } catch {
+        return cloneWithOverrides(message, {
+            content: editedContent,
+            editedTimestamp: undefined,
+            isEdited: false,
+            __impersonationEdited: true
+        });
+    }
 }
 
 function applyNameOverride(user: UserLike | null | undefined) {
