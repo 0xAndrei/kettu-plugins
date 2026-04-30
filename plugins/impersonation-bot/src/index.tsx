@@ -48,13 +48,12 @@ type StoredEditMap = Record<string, StoredEdit>;
 
 const vendetta = window.vendetta;
 const { ReactNative: RN, clipboard } = vendetta.metro.common;
-const { Forms, ErrorBoundary } = vendetta.ui.components;
-const { showConfirmationAlert, showInputAlert } = vendetta.ui.alerts;
+const { Forms } = vendetta.ui.components;
 const { getAssetIDByName } = vendetta.ui.assets;
 const { useProxy } = vendetta.storage;
 const showSimpleActionSheet = find((m) => m?.showSimpleActionSheet && !Object.getOwnPropertyDescriptor(m, "showSimpleActionSheet")?.get);
 const actionSheetController = findByProps("openLazy", "hideActionSheet");
-const { FormRow, FormSection, FormDivider, FormText } = Forms;
+const { FormRow, FormSection, FormDivider, FormText, FormInput } = Forms;
 
 const changes = {
     edits: new Map<string, string>()
@@ -211,6 +210,42 @@ function clearLocalEdits() {
     changes.edits.clear();
 }
 
+function ensureDraftState() {
+    if (typeof plugin.storage.draftMessage !== "string") {
+        plugin.storage.draftMessage = "";
+    }
+
+    if (typeof plugin.storage.draftContent !== "string") {
+        plugin.storage.draftContent = "";
+    }
+}
+
+function stageDraft(messageId: string, content = "") {
+    ensureDraftState();
+    plugin.storage.draftMessage = messageId;
+    plugin.storage.draftContent = content;
+}
+
+function saveDraftEdit() {
+    ensureDraftState();
+
+    const messageId = resolveMessageId(plugin.storage.draftMessage);
+    if (!messageId) {
+        showToast("Invalid message ID or link");
+        return;
+    }
+
+    const content = String(plugin.storage.draftContent ?? "");
+    if (!content.length) {
+        removeLocalEdit(messageId);
+        showToast("Local edit removed");
+        return;
+    }
+
+    saveLocalEdit(messageId, content);
+    showToast("Local edit saved");
+}
+
 function openMessageEditor(message: MessageLike | null | undefined) {
     if (!message?.id) {
         showToast("No target message was available");
@@ -218,61 +253,20 @@ function openMessageEditor(message: MessageLike | null | undefined) {
     }
 
     const existing = getStoredEdits()[message.id];
-
-    showInputAlert({
-        title: LOCAL_EDIT_LABEL,
-        initialValue: existing?.content ?? message.content ?? "",
-        placeholder: "Replacement text",
-        confirmText: "Save",
-        cancelText: "Cancel",
-        onConfirm: (input) => {
-            if (!input.length) {
-                removeLocalEdit(message.id!);
-                showToast("Local edit removed");
-                return;
-            }
-
-            saveLocalEdit(message.id!, input, message);
-            showToast("Local edit saved");
-        }
-    });
+    stageDraft(message.id, existing?.content ?? message.content ?? "");
+    showToast("Draft loaded in Kettu Tweaks settings");
 }
 
 function openManualMessageEditor(initialIdentifier = "") {
-    showInputAlert({
-        title: "Message ID or Link",
-        initialValue: initialIdentifier,
-        placeholder: "1234567890 or discord.com/channels/...",
-        confirmText: "Next",
-        cancelText: "Cancel",
-        onConfirm: (identifier) => {
-            const messageId = resolveMessageId(identifier);
+    const messageId = resolveMessageId(initialIdentifier);
+    if (messageId) {
+        const existing = getStoredEdits()[messageId];
+        stageDraft(messageId, existing?.content ?? "");
+    } else {
+        ensureDraftState();
+    }
 
-            if (!messageId) {
-                showToast("Invalid message ID or link");
-                return;
-            }
-
-            const existing = getStoredEdits()[messageId];
-            showInputAlert({
-                title: LOCAL_EDIT_LABEL,
-                initialValue: existing?.content ?? "",
-                placeholder: "Replacement text",
-                confirmText: "Save",
-                cancelText: "Cancel",
-                onConfirm: (content) => {
-                    if (!content.length) {
-                        removeLocalEdit(messageId);
-                        showToast("Local edit removed");
-                        return;
-                    }
-
-                    saveLocalEdit(messageId, content);
-                    showToast("Local edit saved");
-                }
-            });
-        }
-    });
+    showToast("Open Kettu Tweaks settings to edit the draft");
 }
 
 function openStoredEditMenu(messageId: string, edit: StoredEdit) {
@@ -290,8 +284,11 @@ function openStoredEditMenu(messageId: string, edit: StoredEdit) {
         },
         options: [
             {
-                label: "Edit",
-                onPress: () => openManualMessageEditor(messageId)
+                        label: "Edit",
+                onPress: () => {
+                    openManualMessageEditor(messageId);
+                    actionSheetController?.hideActionSheet?.();
+                }
             },
             {
                 label: "Copy Message ID",
@@ -550,60 +547,76 @@ function resetState() {
 
 function Settings() {
     useProxy(plugin.storage);
+    ensureDraftState();
 
     const edits = Object.entries(getStoredEdits())
         .sort(([, left], [, right]) => right.updatedAt - left.updatedAt);
 
     return (
-        <ErrorBoundary>
-            <RN.ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 38 }}>
-                <FormSection title="Actions" titleStyleType="no_border">
-                    <FormRow
-                        label="Add or Edit Override"
-                        subLabel="Paste a message ID or Discord message link."
-                        leading={<FormRow.Icon source={getAssetIDByName("ic_add_24px")} />}
-                        trailing={FormRow.Arrow}
-                        onPress={() => openManualMessageEditor()}
-                    />
-                    <FormDivider />
-                    <FormRow
-                        label="Clear All Local Edits"
-                        subLabel={`Currently saved: ${edits.length}`}
-                        leading={<FormRow.Icon source={getAssetIDByName("ic_warning_24px")} />}
-                        onPress={() => showConfirmationAlert({
-                            title: "Clear local edits?",
-                            content: "This removes every client-side message override saved by Kettu Tweaks.",
-                            confirmText: "Clear",
-                            cancelText: "Cancel",
-                            onConfirm: () => {
-                                clearLocalEdits();
-                                showToast("Cleared local edits");
-                            }
-                        })}
-                    />
-                </FormSection>
-                <FormSection title="Saved Edits">
-                    {edits.length === 0 && <FormText>No local edits saved yet.</FormText>}
-                    {edits.map(([messageId, edit], index) => (
-                        <React.Fragment key={messageId}>
-                            {!!index && <FormDivider />}
-                            <FormRow
-                                label={edit.authorName || messageId}
-                                subLabel={edit.content}
-                                trailing={FormRow.Arrow}
-                                onPress={() => openStoredEditMenu(messageId, edit)}
-                            />
-                        </React.Fragment>
-                    ))}
-                </FormSection>
-            </RN.ScrollView>
-        </ErrorBoundary>
+        <RN.ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 38 }}>
+            <FormSection title="Editor" titleStyleType="no_border">
+                <FormInput
+                    value={plugin.storage.draftMessage}
+                    onChange={(value: string) => plugin.storage.draftMessage = value}
+                    placeholder="1234567890 or discord.com/channels/..."
+                    title="MESSAGE ID OR LINK"
+                />
+                <FormDivider />
+                <FormInput
+                    value={plugin.storage.draftContent}
+                    onChange={(value: string) => plugin.storage.draftContent = value}
+                    placeholder="Replacement text"
+                    title="LOCAL CONTENT"
+                />
+                <FormDivider />
+                <FormRow
+                    label="Save Draft as Local Edit"
+                    leading={<FormRow.Icon source={getAssetIDByName("Check")} />}
+                    onPress={saveDraftEdit}
+                />
+                <FormDivider />
+                <FormRow
+                    label="Load From Clipboard"
+                    subLabel="Paste a message ID or Discord message link into the draft field."
+                    leading={<FormRow.Icon source={getAssetIDByName("copy")} />}
+                    onPress={() => clipboard.getString().then((value) => {
+                        plugin.storage.draftMessage = value ?? "";
+                        showToast("Loaded clipboard into draft");
+                    })}
+                />
+                <FormDivider />
+                <FormRow
+                    label="Clear All Local Edits"
+                    subLabel={`Currently saved: ${edits.length}`}
+                    leading={<FormRow.Icon source={getAssetIDByName("ic_warning_24px")} />}
+                    onPress={() => {
+                        clearLocalEdits();
+                        showToast("Cleared local edits");
+                    }}
+                />
+            </FormSection>
+            <FormSection title="Saved Edits">
+                {edits.length === 0 && <FormText>No local edits saved yet.</FormText>}
+                {edits.map(([messageId, edit], index) => (
+                    <React.Fragment key={messageId}>
+                        {!!index && <FormDivider />}
+                        <FormRow
+                            label={edit.authorName || messageId}
+                            subLabel={edit.content}
+                            trailing={FormRow.Arrow}
+                            onPress={() => openStoredEditMenu(messageId, edit)}
+                        />
+                    </React.Fragment>
+                ))}
+            </FormSection>
+        </RN.ScrollView>
     );
 }
 
 export default {
     onLoad() {
         hydrateStoredEdits();
+        ensureDraftState();
         ensurePatches();
         registerLocalCommands();
 
