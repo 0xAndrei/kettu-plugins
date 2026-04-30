@@ -11,6 +11,7 @@ const COMMAND_INPUT_BUILT_IN_TEXT = 1;
 const COMMAND_TYPE_CHAT = 1;
 const COMMAND_OPTION_TYPE_STRING = 3;
 const COMMAND_OPTION_TYPE_USER = 6;
+const AVATAR_SIZE = 512;
 const LOCAL_EDIT_LABEL = "Edit Local Message";
 const ACTION_SHEET_NAMES = [
     "MessageLongPressActionSheet",
@@ -346,6 +347,19 @@ function resolveDisplayName(user: any, guildId?: string | null) {
 function resolveAvatarUrl(user: any) {
     if (!user) return undefined;
 
+    const normalizeAvatarUrl = (value: string) => {
+        try {
+            const url = new URL(value);
+            if (url.hostname.endsWith("discordapp.com") || url.hostname.endsWith("discord.com")) {
+                url.searchParams.set("size", String(AVATAR_SIZE));
+            }
+
+            return url.toString();
+        } catch {
+            return value;
+        }
+    };
+
     const avatarMethods = [
         user.getAvatarURL,
         user.getAvatarURLString,
@@ -356,13 +370,13 @@ function resolveAvatarUrl(user: any) {
         if (typeof method !== "function") continue;
 
         try {
-            const value = method.call(user, undefined, true, 160);
+            const value = method.call(user, undefined, true, AVATAR_SIZE);
             if (typeof value === "string" && value.length) {
-                return value;
+                return normalizeAvatarUrl(value);
             }
 
             if (value && typeof value === "object" && typeof value.uri === "string" && value.uri.length) {
-                return value.uri;
+                return normalizeAvatarUrl(value.uri);
             }
         } catch {
             // Keep trying the next avatar method.
@@ -370,11 +384,11 @@ function resolveAvatarUrl(user: any) {
     }
 
     if (typeof user?.avatarURL === "string" && user.avatarURL.length) {
-        return user.avatarURL;
+        return normalizeAvatarUrl(user.avatarURL);
     }
 
     if (typeof user?.avatar === "string" && typeof user?.id === "string") {
-        return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=160`;
+        return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=${AVATAR_SIZE}`;
     }
 
     return undefined;
