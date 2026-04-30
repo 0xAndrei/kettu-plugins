@@ -468,7 +468,6 @@ function getLocalMessageTemplate(channelId: string | null | undefined, entries?:
 function buildLocalMessage(localMessage: StoredLocalMessage, template?: MessageLike | null) {
     const resolvedTemplate = template ?? getLocalMessageTemplate(localMessage.channelId);
     const base = resolvedTemplate ? cloneWithOverrides(resolvedTemplate, {}) : {};
-
     return cloneWithOverrides(base, {
         id: localMessage.id,
         nonce: localMessage.id,
@@ -491,7 +490,7 @@ function buildLocalMessage(localMessage: StoredLocalMessage, template?: MessageL
         pinned: false,
         mentionEveryone: false,
         mentionRoles: [],
-        isEdited: false,
+        isEdited: () => false,
         __kettuLocalSynthetic: true
     });
 }
@@ -606,11 +605,7 @@ function setLiveEditedFields(message: MessageLike, content: string, clearOverrid
     }
 
     if (!message.editedTimestamp) {
-        if (typeof message.isEdited === "function") {
-            message.isEdited = () => false;
-        } else {
-            message.isEdited = false;
-        }
+        message.isEdited = () => false;
     }
 }
 
@@ -951,11 +946,7 @@ function applyMessageEdit(message: MessageLike | null | undefined) {
     });
 
     if (!originalEditedTimestamp) {
-        if (typeof originalIsEdited === "function") {
-            patched.isEdited = () => false;
-        } else {
-            patched.isEdited = false;
-        }
+        patched.isEdited = () => false;
     }
 
     return patched;
