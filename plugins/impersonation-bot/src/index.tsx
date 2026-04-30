@@ -410,8 +410,28 @@ function buildLocalAuthor(localMessage: StoredLocalMessage) {
     };
 }
 
+function getLocalMessageTemplate(channelId: string | null | undefined, entries?: any[] | null) {
+    const candidates = Array.isArray(entries)
+        ? entries
+        : findByStoreName("MessageStore")?.getMessages?.(channelId ?? "")?._array;
+
+    if (!Array.isArray(candidates)) {
+        return null;
+    }
+
+    for (let index = candidates.length - 1; index >= 0; index--) {
+        const candidate = candidates[index];
+        if (!candidate?.id) continue;
+        if (candidate.__kettuLocalSynthetic) continue;
+        return candidate as MessageLike;
+    }
+
+    return null;
+}
+
 function buildLocalMessage(localMessage: StoredLocalMessage, template?: MessageLike | null) {
-    const base = template ? cloneWithOverrides(template, {}) : {};
+    const resolvedTemplate = template ?? getLocalMessageTemplate(localMessage.channelId);
+    const base = resolvedTemplate ? cloneWithOverrides(resolvedTemplate, {}) : {};
 
     return cloneWithOverrides(base, {
         id: localMessage.id,
@@ -842,6 +862,12 @@ function registerLocalCommands() {
 
             const authorName = resolveDisplayName(cachedUser, ctx?.guild?.id) ?? `User ${selectedUserId}`;
             const avatarUrl = resolveAvatarUrl(cachedUser);
+            const messageTemplate = getLocalMessageTemplate(channelId);
+
+            if (!messageTemplate) {
+                showToast("Open a channel with loaded messages before sending a local fake message");
+                return;
+            }
 
             const localMessage: StoredLocalMessage = {
                 id: generateLocalMessageId(),
@@ -922,8 +948,13 @@ function injectStoredLocalMessagesIntoArray(channelId: string | null, entries: a
 
     if (!localMessages.length) return changed;
 
+    const messageTemplate = getLocalMessageTemplate(channelId, entries);
+    if (!messageTemplate) {
+        return changed;
+    }
+
     const existingIds = new Set(entries.map((entry) => entry?.id).filter(Boolean));
-    let template = entries.length ? entries[entries.length - 1] : null;
+    let template: MessageLike | null = messageTemplate;
 
     for (const localMessage of localMessages) {
         if (existingIds.has(localMessage.id)) continue;
@@ -962,7 +993,12 @@ function patchMessageStore() {
                 return message;
             }
 
-            return buildLocalMessage(localMessage);
+            const template = getLocalMessageTemplate(channelId);
+            if (!template) {
+                return message;
+            }
+
+            return buildLocalMessage(localMessage, template);
         }));
     }
 
