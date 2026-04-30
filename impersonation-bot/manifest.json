@@ -1,1 +1,1 @@
-{"name":"Impersonation Bot","description":"Client-side message edits and display-name overrides fetched from your bot API.","authors":[{"name":"0xAndrei","id":"0"}],"main":"index.js","vendetta":{"icon":"ic_badge_staff"},"hash":"bd16e14ac8ba67fd5d6f9273cedd9edc4de7cd68a5af02293d9d658af3beb878"}
+{"name":"Kettu Tweaks","description":"Client-side local message edits handled entirely inside Kettu.","authors":[{"name":"0xAndrei","id":"0"}],"main":"index.js","vendetta":{"icon":"ic_badge_staff"},"hash":"1bfc238b604b64691c97bbb662f368c07d92ffbf11ec808d95fe13c8640721d4"}

@@ -1,6 +1,6 @@
 {
-  "name": "Impersonation Bot",
-  "description": "Client-side message edits and display-name overrides fetched from your bot API.",
+  "name": "Kettu Tweaks",
+  "description": "Client-side local message edits handled entirely inside Kettu.",
   "authors": [
     {
       "name": "0xAndrei",
