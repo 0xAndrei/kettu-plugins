@@ -85,7 +85,8 @@ const log = (...args: any[]) => logger.log(LOG_PREFIX, ...args);
 function cloneWithOverrides<T extends Record<string, any>>(value: T, overrides: Partial<T>) {
     try {
         const cloned = Object.create(Object.getPrototypeOf(value) ?? Object.prototype);
-        Object.assign(cloned, value, overrides);
+        Object.defineProperties(cloned, Object.getOwnPropertyDescriptors(value));
+        Object.assign(cloned, overrides);
         return cloned;
     } catch {
         return Object.assign({}, value, overrides);
