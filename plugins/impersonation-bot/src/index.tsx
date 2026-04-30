@@ -189,6 +189,11 @@ function getStoredLocalMessages() {
     return plugin.storage.localMessages as StoredLocalMessageMap;
 }
 
+function clearStoredLocalMessages() {
+    plugin.storage.localMessages = {};
+    changes.localMessages.clear();
+}
+
 function hydrateStoredEdits() {
     const raw = getStoredEdits();
     const normalized: StoredEditMap = {};
@@ -374,7 +379,7 @@ function resolveAvatarUrl(user: any) {
     return undefined;
 }
 
-function buildLocalAuthor(localMessage: StoredLocalMessage) {
+function buildLocalAuthor(localMessage: StoredLocalMessage, templateAuthor?: any) {
     const cachedUser = resolveCachedUser(localMessage.authorId);
     if (cachedUser) {
         const originalGetAvatarURL = typeof cachedUser.getAvatarURL === "function"
@@ -395,6 +400,36 @@ function buildLocalAuthor(localMessage: StoredLocalMessage) {
                 }
 
                 return originalGetAvatarSource?.(...args);
+            }
+        });
+    }
+
+    if (templateAuthor && typeof templateAuthor === "object") {
+        return cloneWithOverrides(templateAuthor, {
+            id: localMessage.authorId ?? templateAuthor.id ?? `local-author-${localMessage.id}`,
+            username: localMessage.authorName,
+            globalName: localMessage.authorName,
+            displayName: localMessage.authorName,
+            avatarURL: localMessage.avatarUrl ?? templateAuthor.avatarURL,
+            getAvatarURL: (...args: any[]) => {
+                if (localMessage.avatarUrl) {
+                    return localMessage.avatarUrl;
+                }
+
+                return typeof templateAuthor.getAvatarURL === "function"
+                    ? templateAuthor.getAvatarURL(...args)
+                    : templateAuthor.avatarURL;
+            },
+            getAvatarSource: (...args: any[]) => {
+                if (localMessage.avatarUrl) {
+                    return { uri: localMessage.avatarUrl };
+                }
+
+                return typeof templateAuthor.getAvatarSource === "function"
+                    ? templateAuthor.getAvatarSource(...args)
+                    : templateAuthor.avatarURL
+                        ? { uri: templateAuthor.avatarURL }
+                        : undefined;
             }
         });
     }
@@ -441,19 +476,14 @@ function buildLocalMessage(localMessage: StoredLocalMessage, template?: MessageL
         contentParsed: localMessage.content,
         timestamp: getDisplayTimestamp(localMessage.createdAt),
         editedTimestamp: null,
-        author: buildLocalAuthor(localMessage),
-        attachments: [],
-        embeds: [],
-        reactions: [],
-        stickerItems: [],
-        stickers: [],
+        author: buildLocalAuthor(localMessage, resolvedTemplate?.author),
         messageReference: null,
         interaction: null,
         application: null,
         roleSubscriptionData: null,
         activity: null,
         call: null,
-        state: "SENT",
+        state: base.state ?? "SENT",
         type: 0,
         flags: 0,
         tts: false,
@@ -1186,6 +1216,7 @@ function Settings() {
 export default {
     onLoad() {
         hydrateStoredEdits();
+        clearStoredLocalMessages();
         ensureDraftState();
         ensurePatches();
         registerLocalCommands();
